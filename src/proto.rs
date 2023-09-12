@@ -26,27 +26,27 @@ pub fn generate_message(command: &Command) -> Result<Vec<u8>, Error> {
     let mut msg = request::Request::default();
     match command {
         Command::Led(enable) => {
-            let _ = msg
-                .request_type
-                .insert(RequestType::Ledctrl(LedControl { enable: *enable }));
+            let _ = msg.request_type.insert(RequestType::Ledctrl(LedControl {
+                enable: Some(*enable),
+            }));
         }
         Command::Info => {
             let _ = msg.request_type.insert(RequestType::Info(Info {}));
         }
         Command::BtnInterrupt(timeout_us) => {
             let _ = msg.request_type.insert(RequestType::Btnint(BtnInterrupt {
-                timeout_us: *timeout_us,
+                timeout_us: Some(*timeout_us),
             }));
         }
         Command::File(filename) => {
             let _ = msg.request_type.insert(RequestType::File(File {
-                file_name: filename.clone(),
+                file_name: Some(filename.clone()),
             }));
         }
         Command::FileAccept(accept) => {
-            let _ = msg
-                .request_type
-                .insert(RequestType::FileAccept(FileAccept { accept: *accept }));
+            let _ = msg.request_type.insert(RequestType::FileAccept(FileAccept {
+                accept: Some(*accept),
+            }));
         }
         _ => return Err(Error::new(ErrorKind::Unsupported, "Shouldn't be here???")),
     }
@@ -72,20 +72,22 @@ fn accept_file(connection: &mut std::net::TcpStream) {
 pub fn response_action(resp: response::Response, connection: &mut std::net::TcpStream) {
     match resp.response_type.unwrap() {
         ResponseType::Status(led_status) => {
-            if led_status.status {
+            if led_status.status.unwrap() {
                 println!("LED change successful.");
             } else {
                 println!("LED change failed.");
             }
         }
         ResponseType::ServerInfo(info) => {
-            println!("IP:{} | Port:{}", info.ip, info.port);
+            println!("IP:{} | Port:{}", info.ip.unwrap(), info.port.unwrap());
         }
         ResponseType::FileHeader(file_header) => {
-            if file_header.status {
+            if file_header.status.unwrap() {
+                let file_name = file_header.name.unwrap();
                 println!(
                     "Downloading {} ({}) bytes",
-                    file_header.name, file_header.size
+                    file_name,
+                    file_header.size.unwrap()
                 );
 
                 // Send file_accept request to server to start transfer
@@ -93,7 +95,7 @@ pub fn response_action(resp: response::Response, connection: &mut std::net::TcpS
 
                 // Read file
                 let mut pb_file_buffer: Vec<u8> =
-                    vec![0; usize::try_from(file_header.size).unwrap() + 100];
+                    vec![0; usize::try_from(file_header.size.unwrap()).unwrap() + 100];
                 let resp_len = connection.read(&mut pb_file_buffer).unwrap();
 
                 let decoded_file = response::Response::decode(&pb_file_buffer[..resp_len]).unwrap();
@@ -101,13 +103,15 @@ pub fn response_action(resp: response::Response, connection: &mut std::net::TcpS
                 if let ResponseType::File(file) = decoded_file.response_type.unwrap() {
                     let recieved_files_folder = std::path::Path::new("recieved_files/");
                     let mut new_file: std::fs::File =
-                        std::fs::File::create(recieved_files_folder.join(file_header.name.clone()))
+                        std::fs::File::create(recieved_files_folder.join(file_name.clone()))
                             .expect("Couldn't create file.");
-                    new_file.write(&file.file).expect("Couldn't write to file");
+                    new_file
+                        .write(&file.file.unwrap())
+                        .expect("Couldn't write to file");
                 } else {
                     panic!("Expected a file but got another message type.");
                 }
-                println!("Downloaded {} successfully", file_header.name);
+                println!("Downloaded {} successfully", file_name);
             } else {
                 println!("File not found!");
             }
