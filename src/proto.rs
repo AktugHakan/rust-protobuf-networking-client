@@ -1,17 +1,17 @@
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, Read, Write};
 
 use prost::Message;
 
 use crate::protocom::{
-    request::{self, request::RequestType, BtnInterrupt, File, Info, LedControl},
+    request::{self, request::RequestType, BtnInterrupt, File, FileAccept, Info, LedControl},
     response::{self, response::ResponseType},
 };
-
 pub enum Command {
     Led(bool),
     Info,
     BtnInterrupt(u32),
     File(String),
+    FileAccept(bool),
     Exit,
 }
 
@@ -43,11 +43,14 @@ pub fn generate_message(command: &Command) -> Result<Vec<u8>, Error> {
                 file_name: filename.clone(),
             }));
         }
-
+        Command::FileAccept(accept) => {
+            let _ = msg
+                .request_type
+                .insert(RequestType::FileAccept(FileAccept { accept: *accept }));
+        }
         _ => return Err(Error::new(ErrorKind::Unsupported, "Shouldn't be here???")),
     }
     let encoded_size = msg.encoded_len();
-    println!("### generate_message(): msgLen: {}", encoded_size);
 
     let mut encoded_message: Vec<u8> = Vec::with_capacity(encoded_size);
     msg.encode(&mut encoded_message)?;
@@ -55,11 +58,18 @@ pub fn generate_message(command: &Command) -> Result<Vec<u8>, Error> {
     return Ok(encoded_message);
 }
 
-pub fn decode_response_or_panic(message: Vec<u8>) -> response::Response {
-    response::Response::decode(message.as_slice()).unwrap()
+pub fn decode_response_or_panic(message: &[u8]) -> response::Response {
+    response::Response::decode(message).unwrap()
 }
 
-pub fn response_action(resp: response::Response) {
+fn accept_file(connection: &mut std::net::TcpStream) {
+    let file_accept_request = generate_message(&Command::FileAccept(true)).unwrap();
+    connection
+        .write(&file_accept_request)
+        .expect("Couldn't send file acceptance");
+}
+
+pub fn response_action(resp: response::Response, connection: &mut std::net::TcpStream) {
     match resp.response_type.unwrap() {
         ResponseType::Status(led_status) => {
             if led_status.status {
@@ -72,7 +82,32 @@ pub fn response_action(resp: response::Response) {
             println!("IP:{} | Port:{}", info.ip, info.port);
         }
         ResponseType::FileHeader(file_header) => {
-            // File download routine.
+            if file_header.status {
+                println!(
+                    "Downloading {} ({}) bytes",
+                    file_header.name, file_header.size
+                );
+                accept_file(connection);
+
+                let mut pb_file_buffer: Vec<u8> =
+                    vec![0; usize::try_from(file_header.size).unwrap() + 100];
+                let resp_len = connection.read(&mut pb_file_buffer).unwrap();
+
+                let decoded_file = response::Response::decode(&pb_file_buffer[..resp_len]).unwrap();
+
+                if let ResponseType::File(file) = decoded_file.response_type.unwrap() {
+                    let recieved_files_folder = std::path::Path::new("recieved_files/");
+                    let mut new_file: std::fs::File =
+                        std::fs::File::create(recieved_files_folder.join(file_header.name.clone()))
+                            .expect("Couldn't create file.");
+                    new_file.write(&file.file).expect("Couldn't write to file");
+                } else {
+                    panic!("Expected a file but got another message type.");
+                }
+                println!("Downloaded {} successfully", file_header.name);
+            } else {
+                println!("File not found!");
+            }
         }
         ResponseType::File(_) => {
             panic!("File arrived without a header!");

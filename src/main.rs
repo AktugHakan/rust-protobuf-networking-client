@@ -1,6 +1,7 @@
 use client::cmd_io;
 use client::proto;
 use client::proto::Command;
+use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
 
@@ -19,6 +20,12 @@ fn main() {
 
         // Send message and wait for answer.
         socket.write(&encoded_message).unwrap();
+        let mut resp: Vec<u8> = vec![0; 1024];
+        let resp_len = socket
+            .read(&mut resp)
+            .expect("Cannot recieve server response");
+        let resp = proto::decode_response_or_panic(&resp[..resp_len]);
+        proto::response_action(resp, &mut socket);
     }
 }
 
