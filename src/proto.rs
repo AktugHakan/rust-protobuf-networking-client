@@ -87,8 +87,11 @@ pub fn response_action(resp: response::Response, connection: &mut std::net::TcpS
                     "Downloading {} ({}) bytes",
                     file_header.name, file_header.size
                 );
+
+                // Send file_accept request to server to start transfer
                 accept_file(connection);
 
+                // Read file
                 let mut pb_file_buffer: Vec<u8> =
                     vec![0; usize::try_from(file_header.size).unwrap() + 100];
                 let resp_len = connection.read(&mut pb_file_buffer).unwrap();

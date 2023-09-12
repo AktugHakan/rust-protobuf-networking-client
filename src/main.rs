@@ -6,24 +6,27 @@ use std::io::Write;
 use std::net::TcpStream;
 
 fn main() {
+    // Connect to server
     let connection_info = cmd_io::connection_info_from_args();
     let mut socket = TcpStream::connect(connection_info).unwrap();
 
     loop {
+        // Get command from user over command-line
         let command = read_command_until_valid();
 
         if let Command::Exit = command {
             break; // if message is exit; break the main loop
         }
 
+        // Encode and send message
         let encoded_message = encode_or_panic(&command);
-
-        // Send message and wait for answer.
         socket.write(&encoded_message).unwrap();
         let mut resp: Vec<u8> = vec![0; 1024];
         let resp_len = socket
             .read(&mut resp)
             .expect("Cannot recieve server response");
+
+        // Get response and act accordingly
         let resp = proto::decode_response_or_panic(&resp[..resp_len]);
         proto::response_action(resp, &mut socket);
     }
