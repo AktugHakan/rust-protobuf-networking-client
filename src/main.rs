@@ -1,8 +1,6 @@
 use client::cmd_io;
 use client::proto;
 use client::proto::Command;
-use std::io::Read;
-use std::io::Write;
 use std::net::TcpStream;
 
 fn main() {
@@ -18,16 +16,8 @@ fn main() {
             break; // if message is exit; break the main loop
         }
 
-        // Encode and send message
-        let encoded_message = encode_or_panic(&command);
-        socket.write(&encoded_message).unwrap();
-        let mut resp: Vec<u8> = vec![0; 1024];
-        let resp_len = socket
-            .read(&mut resp)
-            .expect("Cannot recieve server response");
+        let resp = proto::send_request(&mut socket, &command);
 
-        // Get response and act accordingly
-        let resp = proto::decode_response_or_panic(&resp[..resp_len]);
         proto::response_action(resp, &mut socket);
     }
 }
@@ -42,9 +32,4 @@ fn read_command_until_valid() -> Command {
             println!("{}", error);
         }
     }
-}
-
-// Get encoded message or panic
-fn encode_or_panic(command: &Command) -> Vec<u8> {
-    proto::generate_message(command).expect("Cannot write to byte buffer after encoding.")
 }
