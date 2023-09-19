@@ -160,6 +160,7 @@ fn download_file(
     // TODO!!!
     // Check if all segments exist ....
 
+    std::fs::create_dir_all("recieved_files/").unwrap();
     let recieved_files_folder = std::path::Path::new("recieved_files/");
     let mut file = std::fs::File::create(recieved_files_folder.join(file_name)).unwrap();
     while !segments.is_empty() {
