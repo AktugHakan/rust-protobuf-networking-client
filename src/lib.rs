@@ -20,6 +20,7 @@ pub fn create_large_shirt(color: String) -> items::Shirt {
 */
 
 pub mod cmd_io;
+pub mod file_op;
 pub mod network;
 pub mod proto;
 

@@ -1,12 +1,12 @@
 use std::{
-    collections::BinaryHeap,
-    io::{Error, ErrorKind, Write},
+    io::{Error, ErrorKind},
     net::TcpStream,
 };
 
 use prost::Message;
 
 use crate::{
+    file_op,
     network::TcpWithSize,
     protocom::{
         request::{
@@ -21,32 +21,8 @@ pub enum Command {
     BtnInterrupt(u32),
     File(String),
     FileAccept(bool),
-    FileAck(u64),
+    FileAck(Option<u64>),
     Exit,
-}
-
-#[derive(Eq)]
-struct FileSegment {
-    order: u64,
-    data: Vec<u8>,
-}
-
-impl Ord for FileSegment {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.order.cmp(&self.order)
-    }
-}
-
-impl PartialOrd for FileSegment {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for FileSegment {
-    fn eq(&self, other: &Self) -> bool {
-        self.order == other.order
-    }
 }
 
 pub fn generate_message(command: &Command) -> Result<Vec<u8>, Error> {
@@ -78,7 +54,7 @@ pub fn generate_message(command: &Command) -> Result<Vec<u8>, Error> {
         Command::FileAck(next) => {
             let _ = msg
                 .request_type
-                .insert(RequestType::FileAck(FileAck { next: Some(*next) }));
+                .insert(RequestType::FileAck(FileAck { next: *next }));
         }
         _ => return Err(Error::new(ErrorKind::Unsupported, "Shouldn't be here???")),
     }
@@ -95,13 +71,6 @@ pub fn decode_response_or_panic(message: &[u8]) -> response::Response {
     response::Response::decode(message).unwrap()
 }
 
-fn accept_file(connection: &mut std::net::TcpStream) {
-    let file_accept_request = generate_message(&Command::FileAccept(true)).unwrap();
-    connection
-        .send(&file_accept_request)
-        .expect("Cannot accept file.");
-}
-
 pub fn response_action(resp: response::Response, connection: &mut std::net::TcpStream) {
     match resp.response_type.unwrap() {
         ResponseType::Status(led_status) => {
@@ -115,25 +84,7 @@ pub fn response_action(resp: response::Response, connection: &mut std::net::TcpS
             println!("IP:{} | Port:{}", info.ip.unwrap(), info.port.unwrap());
         }
         ResponseType::FileHeader(file_header) => {
-            if file_header.status.unwrap() {
-                let segment_count = file_header.segment_count();
-                let file_name = file_header.name.unwrap();
-                println!(
-                    "Downloading {} ({}) bytes",
-                    file_name,
-                    file_header.size.unwrap()
-                );
-
-                // Send file_accept request to server to start transfer
-                accept_file(connection);
-                println!("Accepted file");
-
-                download_file(connection, file_name.as_str(), segment_count);
-
-                println!("Downloaded {} successfully", file_name);
-            } else {
-                println!("File not found!");
-            }
+            file_op::file_download_routine(connection, file_header)
         }
         ResponseType::File(_) => {
             panic!("File arrived without a header!");
@@ -141,50 +92,9 @@ pub fn response_action(resp: response::Response, connection: &mut std::net::TcpS
     }
 }
 
-fn download_file(
-    connection: &mut std::net::TcpStream,
-    file_name: &str,
-    segment_count: u64,
-) -> std::fs::File {
-    let mut segments: BinaryHeap<FileSegment> = BinaryHeap::with_capacity(segment_count as usize);
-
-    for i in 0..segment_count {
-        let data = recieve_file_segment(connection, i);
-        let file_segment = FileSegment {
-            data: data,
-            order: i,
-        };
-        segments.push(file_segment);
-    }
-
-    // TODO!!!
-    // Check if all segments exist ....
-
-    std::fs::create_dir_all("recieved_files/").unwrap();
-    let recieved_files_folder = std::path::Path::new("recieved_files/");
-    let mut file = std::fs::File::create(recieved_files_folder.join(file_name)).unwrap();
-    while !segments.is_empty() {
-        let data = segments.pop().unwrap().data;
-        file.write(&data).expect("Cannot write to file");
-    }
-
-    file
-}
-
 pub fn recieve_response(socket: &mut TcpStream) -> Response {
     let resp = socket.recieve().unwrap();
     decode_response_or_panic(&resp)
-}
-
-pub fn recieve_file_segment(socket: &mut TcpStream, segment_no: u64) -> Vec<u8> {
-    only_send_request(socket, &Command::FileAck(segment_no));
-    if let response::response::ResponseType::File(file) =
-        recieve_response(socket).response_type.unwrap()
-    {
-        return file.file.unwrap();
-    } else {
-        panic!("Expected a file but got another response.");
-    }
 }
 
 pub fn send_request(socket: &mut TcpStream, command: &Command) -> Response {
