@@ -4,16 +4,12 @@ use std::{
     io::{Read, Result, Seek, Write},
     net::TcpStream,
     path::PathBuf,
-    vec,
 };
 
 use crate::{
     network::TcpWithSize,
     proto::{self, recieve_response, Command},
-    protocom::{
-        request::File,
-        response::{self, response::ResponseType, FileHeader},
-    },
+    protocom::response::{self, response::ResponseType, FileHeader},
 };
 
 use sha2::{Digest, Sha256};
