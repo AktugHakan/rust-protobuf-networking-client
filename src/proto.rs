@@ -89,6 +89,9 @@ pub fn response_action(resp: response::Response, connection: &mut std::net::TcpS
         ResponseType::File(_) => {
             panic!("File arrived without a header!");
         }
+        ResponseType::FileHash(_) => {
+            panic!("File hash arrived but file is unknown.");
+        }
     }
 }
 

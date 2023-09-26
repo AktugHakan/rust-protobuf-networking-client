@@ -1,16 +1,22 @@
 use std::{
     collections::BinaryHeap,
     ffi::OsStr,
-    io::{Result, Write},
+    io::{Read, Result, Seek, Write},
     net::TcpStream,
     path::PathBuf,
+    vec,
 };
 
 use crate::{
     network::TcpWithSize,
-    proto::{self, Command},
-    protocom::response::{self, FileHeader},
+    proto::{self, recieve_response, Command},
+    protocom::{
+        request::File,
+        response::{self, response::ResponseType, FileHeader},
+    },
 };
+
+use sha2::{Digest, Sha256};
 
 #[derive(Eq)]
 struct FileSegment {
@@ -50,14 +56,19 @@ pub fn file_download_routine(socket: &mut std::net::TcpStream, file_header: File
         crate::file_op::start_server_file_mode(socket);
         println!("Accepted file");
 
-        crate::file_op::download_file(
+        let mut file = crate::file_op::download_file(
             socket,
             file_name.as_str(),
             &"recieved_files/",
             segment_count,
         );
 
-        exit_server_file_mode(socket);
+        let hash = exit_server_file_mode(socket);
+        if check_file_integrity(&hash, &mut file) {
+            println!("FILE OK");
+        } else {
+            println!("FILE CORRUPTED");
+        }
 
         println!("Downloaded {} successfully", file_name);
     } else {
@@ -70,7 +81,7 @@ fn download_file<T: Into<PathBuf> + AsRef<OsStr>>(
     file_name: &str,
     download_directory: &T,
     segment_count: u64,
-) {
+) -> std::fs::File {
     let mut segments: BinaryHeap<FileSegment> = BinaryHeap::with_capacity(segment_count as usize);
 
     for i in 0..segment_count {
@@ -85,7 +96,7 @@ fn download_file<T: Into<PathBuf> + AsRef<OsStr>>(
     // TODO!!!
     // Check if all segments exist ....
 
-    save_file(download_directory, file_name, segments).expect("File cannot be saved on disk.");
+    save_file(download_directory, file_name, segments).expect("File cannot be saved on disk.")
 }
 
 fn recieve_file_segment(socket: &mut TcpStream, segment_no: u64) -> Vec<u8> {
@@ -106,7 +117,11 @@ fn start_server_file_mode(connection: &mut std::net::TcpStream) {
         .expect("Cannot accept file.");
 }
 
-fn save_file<T>(directory: &T, file_name: &str, mut segments: BinaryHeap<FileSegment>) -> Result<()>
+fn save_file<T>(
+    directory: &T,
+    file_name: &str,
+    mut segments: BinaryHeap<FileSegment>,
+) -> Result<std::fs::File>
 where
     T: Into<std::path::PathBuf> + AsRef<OsStr>,
 {
@@ -114,14 +129,41 @@ where
     std::fs::create_dir_all(save_dir.clone())?;
 
     save_dir.push(file_name);
-    let mut file = std::fs::File::create(save_dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .read(true)
+        .open(save_dir)?;
     while !segments.is_empty() {
         let data = segments.pop().unwrap().data;
         file.write(&data)?;
     }
-    Ok(())
+    Ok(file)
 }
 
-fn exit_server_file_mode(socket: &mut TcpStream) {
+fn check_file_integrity(sha2_digest: &[u8], file: &mut std::fs::File) -> bool {
+    let mut hasher = Sha256::new();
+    let mut file_buffer: Vec<u8> = Vec::with_capacity(file.metadata().unwrap().len() as usize);
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    file.read_to_end(&mut file_buffer).unwrap();
+    hasher.update(file_buffer);
+    let file_hash: Vec<u8> = hasher.finalize().to_vec();
+
+    for (a, b) in sha2_digest.iter().zip(file_hash.iter()) {
+        if *a != *b {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+fn exit_server_file_mode(socket: &mut TcpStream) -> Vec<u8> {
     proto::only_send_request(socket, &Command::FileAck(None));
+    let resp = recieve_response(socket);
+    if let ResponseType::FileHash(hash) = resp.response_type.unwrap() {
+        return hash.digest.unwrap();
+    } else {
+        panic!("Expected hash, recieved another type");
+    }
 }
